@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>MathJax + SVG Split Editor</title>
+
+<script>
+window.MathJax = {
+  tex: { inlineMath: [["$", "$"], ["\\(", "\\)"]] },
+  svg: { fontCache: "global" }
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+<style>
+body {
+margin: 0;
+display: flex;
+height: 100vh;
+overflow: hidden;
+font-family: sans-serif;
+}
+
+#editor {
+width: 50%; 
+height: 100%;
+padding: 10px;
+font-size: 16px;
+border-right: 2px solid #ccc;
+outline: none;
+resize: none;
+}
+
+#preview {
+width: 50%; 
+height: 100%;
+overflow: auto;
+padding: 10px;
+}
+
+
+.svg-container {
+    margin-top: 20px;
+    border: 1px solid #ddd;
+    
+    display: block; 
+    padding: 5px; 
+    max-width: 95%; 
+}
+
+.svg-container svg {
+    display: block;
+    width: auto;
+    height: auto;
+    margin: 0; 
+    border: none; 
+}
+</style>
+</head>
+
+<body>
+
+<textarea id="editor" placeholder="Type here... Math text, then %%%, then SVG code"></textarea>
+<div id="preview"></div>
+
+<script>
+// Default line thickness
+const STROKE_WIDTH = "1";
+const DEFAULT_COLOR = "black";
+const TEXT_SIZE = 8;
+const SIZE_MULTIPLIER = 1.5; 
+
+function setCommonAttributes(element) {
+    element.setAttribute("stroke", DEFAULT_COLOR);
+    element.setAttribute("stroke-width", STROKE_WIDTH);
+}
+
+let minX, minY, maxX, maxY;
+
+function initBounds() {
+    minX = Infinity;
+    minY = Infinity;
+    maxX = -Infinity;
+    maxY = -Infinity;
+}
+
+function updateBounds(x, y) {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+}
+
+// ----------------------------------------------------
+// Drawing Functions (Enforcing Style: Black lines, blank/white fill) 
+// ----------------------------------------------------
+
+//Circle
+function drawCircle(svg, cx, cy, r, fill = "none") { 
+  let C = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  C.setAttribute("cx", cx);
+  C.setAttribute("cy", cy);
+  C.setAttribute("r", r);
+  C.setAttribute("fill", fill === "white" ? "white" : "none"); 
+  setCommonAttributes(C);
+  svg.appendChild(C);
+  
+  updateBounds(cx - r, cy - r);
+  updateBounds(cx + r, cy + r);
+}
+
+//Line
+function drawLine(svg, x1, y1, x2, y2) {
+  let L = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  L.setAttribute("x1", x1);
+  L.setAttribute("y1", y1);
+  L.setAttribute("x2", x2);
+  L.setAttribute("y2", y2);
+  setCommonAttributes(L);
+  svg.appendChild(L);
+  
+  updateBounds(x1, y1);
+  updateBounds(x2, y2);
+}
+
+//Point
+function drawPoint(svg, x, y, r = 3) {
+  let P = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  P.setAttribute("cx", x);
+  P.setAttribute("cy", y);
+  P.setAttribute("r", r);
+  P.setAttribute("fill", DEFAULT_COLOR);
+  svg.appendChild(P);
+
+  updateBounds(x - r, y - r);
+  updateBounds(x + r, y + r);
+}
+
+//Polygon (for Triangles, Quadrilaterals, etc.) 
+function drawPolygon(svg, points, fill = "none") {
+    let P = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    P.setAttribute("points", points);
+    P.setAttribute("fill", fill === "white" ? "white" : "none"); // Allow white or none
+    setCommonAttributes(P);
+    svg.appendChild(P);
+
+    const coords = points.split(/[ ,]/).filter(c => c !== '').map(Number);
+    for (let i = 0; i < coords.length; i += 2) {
+        updateBounds(coords[i], coords[i+1]);
+    }
+}
+
+//Quadrilateral (Helper using Polygon)
+function drawQuadrilateral(svg, x1, y1, x2, y2, x3, y3, x4, y4, fill = "none") {
+    const points = `${x1},${y1} ${x2},${y2} ${x3},${y3} ${x4},${y4}`;
+    drawPolygon(svg, points, fill);
+}
+
+//Triangle (Helper using Polygon)
+function drawTriangle(svg, x1, y1, x2, y2, x3, y3, fill = "none") {
+    const points = `${x1},${y1} ${x2},${y2} ${x3},${y3}`;
+    drawPolygon(svg, points, fill);
+}
+
+//Text (Label) 
+function drawText(svg, text, x, y, size = TEXT_SIZE) {
+    let T = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    T.setAttribute("x", x);
+    T.setAttribute("y", y);
+    T.setAttribute("font-size", size);
+    T.setAttribute("fill", DEFAULT_COLOR);
+    T.textContent = text;
+    svg.appendChild(T);
+    
+    updateBounds(x, y);
+}
+
+
+//Main update function
+function updatePreview() {
+  const raw = document.getElementById("editor").value;
+  const preview = document.getElementById("preview");
+
+  const parts = raw.split("%%%");
+  const mathPart = parts[0] || "";
+  const svgRawCode = parts[1] || "";
+
+  // Reset the preview
+  preview.innerHTML = "";
+
+  //Render MathJax section
+  let mathDiv = document.createElement("div");
+  mathDiv.innerHTML = mathPart;
+  preview.appendChild(mathDiv);
+  MathJax.typesetPromise([mathDiv]);
+
+  //Render SVG section
+  if (svgRawCode.trim().length > 0) {
+    const diagramCodes = svgRawCode.split("///");
+    
+    const helpers = {
+        drawLine: drawLine, 
+        drawCircle: drawCircle, 
+        drawPoint: drawPoint,
+        drawPolygon: drawPolygon,
+        drawQuadrilateral: drawQuadrilateral,
+        drawTriangle: drawTriangle, 
+        drawText: drawText
+    };
+
+    diagramCodes.forEach((codeBlock, index) => {
+        if (codeBlock.trim().length === 0) return; 
+
+        initBounds(); 
+
+        let svgContainer = document.createElement("div");
+        svgContainer.className = "svg-container";
+        let SVG = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+
+        try {
+            // Evaluate SVG code
+            new Function("SVG", ...Object.keys(helpers), codeBlock)(
+                SVG, ...Object.values(helpers)
+            );
+
+            // Dynamic Sizing
+            if (minX !== Infinity) {
+                const padding = 20; 
+                const viewBoxX = minX - padding;
+                const viewBoxY = minY - padding;
+                const viewBoxWidth = (maxX - minX) + 2 * padding;
+                const viewBoxHeight = (maxY - minY) + 2 * padding;
+                
+                SVG.setAttribute("viewBox", `${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
+                
+                const displayWidth = viewBoxWidth * SIZE_MULTIPLIER;
+                const displayHeight = viewBoxHeight * SIZE_MULTIPLIER;
+
+                SVG.setAttribute("width", `${displayWidth}px`);
+                SVG.setAttribute("height", `${displayHeight}px`);
+                
+            } else {
+                // Fallback 
+                SVG.setAttribute("width", "130px");
+                SVG.setAttribute("height", "130px");
+                SVG.setAttribute("viewBox", "0 0 100 100");
+            }
+            // ---------------------------------------------
+            
+            svgContainer.appendChild(SVG);
+            preview.appendChild(svgContainer);
+
+        } catch (e) {
+            let err = document.createElement("pre");
+            err.style.color = 'red';
+            err.textContent = `Error in Diagram ${index + 1}:\n${e.message}`;
+            preview.appendChild(err);
+        }
+    });
+  }
+}
+
+document.getElementById("editor").addEventListener("input", updatePreview);
+</script>
+
+</body>
+</html>
